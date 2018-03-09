@@ -6,3 +6,8 @@ papers/*
 rsc/performace_metrics/*
 /references.bib.bak
 rsc/.ipynb_checkpoints/*
+/0-GECCO18-coef-prop.aux
+/0-GECCO18-coef-prop.log
+/0-GECCO18-coef-prop.out
+/0-GECCO18-coef-prop.pdf
+/0-GECCO18-coef-prop.synctex.gz
