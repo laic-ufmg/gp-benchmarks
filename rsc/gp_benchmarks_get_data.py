@@ -3,16 +3,17 @@
 
 # In[1]:
 
-
 import pandas as pd
 import numpy as np
-import random
 import requests
 import zipfile
 import io
 from math import sqrt, sin, cos, log, pi, e
 from gplearn.genetic import SymbolicRegressor
 from gplearn.functions import make_function
+from gplearn.fitness import root_mean_square_error
+from sklearn.model_selection import KFold
+from multiprocessing import Pool, cpu_count
 
 import os
 
@@ -38,7 +39,8 @@ def synthetic_gen(rnd, function, training_gen, test_gen=None):
             test_set.append(inst + [function(*inst)])
     else:
         test_set = training_set
-    return [pd.DataFrame(training_set), pd.DataFrame(test_set)]
+    return {"training": pd.DataFrame(training_set),
+            "test": pd.DataFrame(test_set)}
 
 class U:
     def __init__(self, ini, end, n):
@@ -66,15 +68,6 @@ class E:
         self.index += 1
         return inst
     
-#def p_log(x):
-#    if x == 0:
-#        return 0
-#    else:
-#        return log(abs(x))
-#    
-#def p_sqrt(x):
-#    return sqrt(abs(x))
-
 def get_data(url, rnd=None, pd_sep=',', pd_header=None, pd_skiprows=None, dataset=None):
     if dataset == "BOH":
         from sklearn.datasets import load_boston
@@ -107,7 +100,7 @@ def get_data(url, rnd=None, pd_sep=',', pd_header=None, pd_skiprows=None, datase
             df.drop(df.columns[0], axis=1, inplace=True)
             # Concatenate the dummy variables with the data
             df = pd.concat([df_dummies, df], axis=1)
-            df = df.sample(500, random_state=rnd.randrange(100), axis=0)
+            df = df.sample(500, random_state=rnd, axis=0)
         elif dataset == "CPU":
             # Drop the first two columns
             df.drop(df.columns[[0,1]], axis=1, inplace=True)
@@ -116,14 +109,14 @@ def get_data(url, rnd=None, pd_sep=',', pd_header=None, pd_skiprows=None, datase
         elif dataset == "OZO":
             # Imputation (replance NaN's by the mean of the column)
             df.fillna(df.mean(), inplace=True)
-    return df
+    return df.apply(np.float64)
          
     
 # In[82]:
 
 
 seed = 1234
-rnd = random.Random(seed)
+rnd = np.random.RandomState(seed)
 
 data_synt = {"Meier-3": synthetic_gen(rnd, 
                                       lambda x_1,x_2: (x_1**2*x_2**2)/(x_1+x_2), 
@@ -347,7 +340,7 @@ data_synt = {"Meier-3": synthetic_gen(rnd,
 # In[ ]:    
     
 seed = 4567
-rnd = random.Random(seed)
+rnd = np.random.RandomState(seed)
     
 data_real = {"Abalone": get_data('https://archive.ics.uci.edu/ml/machine-learning-databases/abalone/abalone.data',
                             rnd=rnd, dataset='ABA'),
@@ -385,118 +378,123 @@ data_real = {"Abalone": get_data('https://archive.ics.uci.edu/ml/machine-learnin
                                        
                                        
 # In[]:
-aq = make_function(function=lambda x1, x2: np.divide(x1, np.sqrt(1 + x2**2)),
+
+def _aq(x1, x2):
+    try:
+        return np.divide(x1, np.sqrt(1 + x2**2))
+    except:
+        print(x1, '\n', x2)
+
+aq = make_function(function=_aq,
                    name='aq',
                    arity=2)
-exp = make_function(function=lambda x1: np.exp(x1),
-                   name='exp',
-                   arity=1)
 
-# Genetic programming instance used to perform symbolic regression in the datasets
-function_set = ['add', 'sub', 'mul', aq, 'sqrt', 'sin', exp]
-parameters = {'population_size': 1000,
-               'generations': 50, 
-               'stopping_criteria': 0.00,
-               'const_range': (-1,1),
-               'init_depth': (2,6),
-               'init_method': 'half and half',
-               'metric': 'rmse',
-               'p_crossover': 0.7, 
-               'function_set': function_set,
-               'p_subtree_mutation': 0.1,
-               'p_hoist_mutation': 0.1, 
-               'p_point_mutation': 0.1,
-               'max_samples': 1, 
-               'verbose': 1,
-               'parsimony_coefficient': 0.01, 
-               'random_state': 0}
-est_gp = SymbolicRegressor(**parameters)
+def evaluate(dataset_lst, n_jobs=None, n_rep=30, cv=None):
+    stats = {}
+    experiments = []
+    seed = 1234
+    rnd = np.random.RandomState(seed)
+    kf = KFold(n_splits=5, shuffle=True, random_state=rnd)
+    
+    for data_name, data_points in dataset_lst.items():
+        stats[data_name] = {}
+        # Reset the pseudo-random number generator for each dataset (used by GP)
+        rnd = np.random.RandomState(seed)
+        
+        if cv is not None: 
+            partitions = list(kf.split(data_points))
+        
+        for i in range(n_rep):
+            if cv is not None: 
+                training = data_points.iloc[partitions[i % cv][0],:]
+                test = data_points.iloc[partitions[i % cv][1],:]
+            else:
+                training = data_points['training']
+                test = data_points['test']
+            experiments.append([data_name, i+1, training, test, rnd.randint(10**6)])
+    if not n_jobs or n_jobs > 1:    
+        with Pool(processes=n_jobs) as pool:
+            for exec_stats in pool.imap(worker, experiments):
+                data_name = exec_stats[0]
+                for stats_name, stats_value in exec_stats[1].items():
+                    if stats_name not in stats[data_name]:
+                        stats[data_name][stats_name] = []
+                    stats[data_name][stats_name].append(stats_value)
+    else:
+        for experiment in experiments:
+            exec_stats = worker(experiment)
+            data_name = exec_stats[0]
+            for stats_name, stats_value in exec_stats[1].items():
+                if stats_name not in stats[data_name]:
+                    stats[data_name][stats_name] = []
+                stats[data_name][stats_name].append(stats_value)
+    return stats
 
-x = data_synt['Koza-2']
-fit = est_gp.fit(x[0].iloc[:,:-1], x[0].iloc[:,-1],)
+def worker(param):
+    print("Dataset \"" + param[0] + "\", exec.", param[1])
+    return [param[0], run_gp(training=param[2], test=param[3], rnd=param[4])]
 
-# In[]:
-import timeit
-fmt = "{:<12}{:.4f}"
-print(fmt.format("Sin time:",
-                 timeit.timeit(stmt="[np.sin(x) for x in X]", 
-                                      setup="import numpy as np;"
-                                      "X = np.random.rand(1,1000)", 
-                                      number = 10000)))
-print(fmt.format("Cos time:", 
-                 timeit.timeit(stmt="[np.cos(x) for x in X]", 
-                                      setup="import numpy as np;"
-                                      "X = np.random.rand(1,1000)", 
-                                      number = 10000)))
-print(fmt.format("Log time:", 
-                 timeit.timeit(stmt="[_protected_log(x) for x in X]", 
-                                      setup="from gplearn.functions import _protected_log;"
-                                      "import numpy as np;"
-                                      "X = np.random.rand(1,1000)", 
-                                      number = 10000)))
-print(fmt.format("Sqrt time:", 
-                 timeit.timeit(stmt="[_protected_sqrt(x) for x in X]", 
-                                      setup="from gplearn.functions import _protected_sqrt;"
-                                      "import numpy as np;"
-                                      "X = np.random.rand(1,1000)", 
-                                      number = 10000)))
-print(fmt.format("Div time:", 
-                 timeit.timeit(stmt="[_protected_division(x,y) for x,y in zip(X,Y)]", 
-                                      setup="from gplearn.functions import _protected_division;"
-                                      "import numpy as np;"
-                                      "X = np.random.rand(1,1000);"
-                                      "Y = np.random.rand(1,1000);", 
-                                      number = 10000)))
-print(fmt.format("AQ time:", 
-                 timeit.timeit(stmt="[np.divide(x, np.sqrt(1+y**2)) for x,y in zip(X,Y)]", 
-                                      setup="from gplearn.functions import _protected_division;"
-                                      "import numpy as np;"
-                                      "X = np.random.rand(1,1000);"
-                                      "Y = np.random.rand(1,1000);", 
-                                      number = 10000)))
-print(fmt.format("Mul time:", 
-                 timeit.timeit(stmt="[np.multiply(x,y) for x,y in zip(X,Y)]", 
-                                      setup="import numpy as np;"
-                                      "X = np.random.rand(1,1000);"
-                                      "Y = np.random.rand(1,1000);", 
-                                      number = 10000)))
-print(fmt.format("Sub time:", 
-                 timeit.timeit(stmt="[np.subtract(x,y) for x,y in zip(X,Y)]", 
-                                      setup="import numpy as np;"
-                                      "X = np.random.rand(1,1000);"
-                                      "Y = np.random.rand(1,1000);", 
-                                      number = 10000)))
-print(fmt.format("Add time:",
-                 timeit.timeit(stmt="[np.add(x,y) for x,y in zip(X,Y)]", 
-                                      setup="import numpy as np;"
-                                      "X = np.random.rand(1,1000);"
-                                      "Y = np.random.rand(1,1000);", 
-                                      number = 10000)))
-# In[ ]:
-from gplearn.functions import _protected_log
-import matplotlib.pyplot as plt
-X = np.linspace(-50,50, 300)
-plt.plot(X, _protected_log(X))
-plt.plot(X, )
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
-                                       
+def run_gp(training, test, rnd=None):
+    # Genetic programming instance used to perform symbolic regression in the datasets
+    function_set = ['add', 'sub', 'mul', aq, 'sqrt', 'sin']
+    gp_param = {'population_size': 1000,
+                  'generations': 50, 
+                  'stopping_criteria': 0.00,
+                  'const_range': (-1,1),
+                  'init_depth': (2,6),
+                  'init_method': 'half and half',
+                  'metric': 'rmse',
+                  'tournament_size': 10,
+                  'p_crossover': 0.85, 
+                  'function_set': function_set,
+                  'p_subtree_mutation': 0.05,
+                  'p_hoist_mutation': 0.05, 
+                  'p_point_mutation': 0.05,
+                  'max_samples': 1, 
+                  'verbose': 0,
+                  'parsimony_coefficient': 0.1, 
+                  'random_state': rnd,
+                  'n_jobs': 1}
+    est_gp = SymbolicRegressor(**gp_param)
+    est_gp.fit(training.iloc[:,:-1], training.iloc[:,-1])
+    
+    norm_const = np.sqrt(training.shape[0]/(training.shape[0]-1))/training.iloc[:,-1].std()
+    stats = {'size': est_gp._program.length_,
+             'tr_rmse': est_gp._program.raw_fitness_,
+             'tr_nrmse': est_gp._program.raw_fitness_ * norm_const}
+    y_est = est_gp.predict(test.iloc[:,:-1])
+    rmse = np.sqrt(np.average((y_est - test.iloc[:,-1]) ** 2))
+    norm_const = np.sqrt(test.shape[0]/(test.shape[0]-1))/test.iloc[:,-1].std()
+    
+    stats['ts_rmse'] = rmse
+    stats['ts_nrmse'] = rmse * norm_const
+    
+    return stats
+
+def write_stats(stats_dict, path='./performace_metrics/'):
+    """Write statistics returned by worker/run_gp methods.
+
+    Extended description of function.
+
+    Parameters
+    ----------
+    stats_dict : dict
+        A dictionary containing results from different datasets. The format is
+        in the form stats_dict['data_set_name']['statistics_name']
+    arg2 : str
+        Description of arg2
+
+    Returns
+    -------
+    bool
+        Description of return value
+    """
+    for key, data in stats_dict.items():
+        df = pd.DataFrame(data)
+        df.to_csv(path + key.lower() + '.csv')
+
+#stats_synt = evaluate(data_synt, n_rep = 30)
+#write_stats(stats_synt)
+#
+#stats_real = evaluate(data_real, n_rep = 30, cv = 5)
+#write_stats(stats_real)

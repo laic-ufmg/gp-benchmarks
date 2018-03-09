@@ -2,3 +2,7 @@ rsc/papers_analisados-luis/
 /IEEEtran.bst
 /IEEEtran.cls
 papers/*
+/.~lock.datasets.ods#
+rsc/performace_metrics/*
+/references.bib.bak
+rsc/.ipynb_checkpoints/*
