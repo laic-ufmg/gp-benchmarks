@@ -11,3 +11,9 @@ rsc/.ipynb_checkpoints/*
 /0-GECCO18-coef-prop.out
 /0-GECCO18-coef-prop.pdf
 /0-GECCO18-coef-prop.synctex.gz
+/rsc/plots/*
+/rsc/data/*
+/rsc/performace_metrics-bck/*
+*.bbl
+*.blg
+
