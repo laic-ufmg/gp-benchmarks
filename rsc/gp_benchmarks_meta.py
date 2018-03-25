@@ -27,9 +27,8 @@ import matplotlib.cm as cm
 
 import os
 # Change the current folder to the folder where we can find the results
-os.chdir('/home/luiz/Dados/Trabalho/Pesquisa/luiz_otavio_operador_semantico/'
+os.chdir('/home/amanda/Luiz/Trabalho/Pesquisa/luiz_otavio_operador_semantico/'
          'publicacoes/2018/GECCO-GP-Benchmarks/rsc/')
-
 
 # # Analysis pre-running
 # ## Comparing function times (used by GP)
@@ -607,6 +606,16 @@ names_real = ['boston', 'concrete-strength', 'energy-cooling', 'forest-fire',
               'combined-cycle', 'ozone', 'energy-heating', 'abalone', 'airfoil', 
               'yacht', 'computer-hardware', 'wine-quality-red', 'wine-quality-white']
 
+data_synt = {}
+names_real = {}
+for k in names_synt:
+    data_synt[k] = {'training': pd.read_csv('data/' + k + '_tr.csv'),
+                    'test': pd.read_csv('data/' + k + '_ts.csv')
+                    }
+
+for k in names_real:
+    data_real[k] = pd.read_csv('data/' + k + '.csv')
+
 # In[ ]:
 
 
@@ -625,7 +634,6 @@ def get_meta_data(data_set_name, training, test):
     meta_data['Mean absolute correlation attribute-target (TR)'] = np.mean([fold_cor.iloc[-1, :-1].abs() for fold_cor in training_corr])
     
     meta_data['N. instances (TS)'] = np.mean([fold.shape[0] for fold in test])
-    meta_data['N. features (TS)'] = np.mean([fold.shape[1] - 1 for fold in test])
     meta_data['Target std (TS)'] = np.mean([fold.iloc[:,-1].std() for fold in test])
     meta_data['Target skewness (TS)'] = np.mean([fold.iloc[:,-1].skew() for fold in test])
     test_corr = [fold.corr() for fold in test]
@@ -661,17 +669,40 @@ for key, data in data_synt.items():
     meta_info[key]['Nature'] = 'Synthetic'
 
 meta_info = pd.DataFrame(meta_info).transpose()
+# Impute NaN's with 0 (NaN's appear when a feature has no variation)
+meta_info['Mean absolute correlation attribute-target (TR)'].fillna(value = 0, inplace = True)
+meta_info['Mean absolute correlation attribute-target (TS)'].fillna(value = 0, inplace = True)
+# Cast the columns to numeric types
+for k in meta_info.keys():
+    if k != 'Nature':
+        meta_info[k] = pd.to_numeric(meta_info[k])
+
+
+
+# In[]
+from sklearn.ensemble import RandomForestRegressor
+
+X = meta_info.drop(['Median NRMSE  (TR)', 'Function size', 
+                    'Nature', 'Median NRMSE (TS)'], axis = 1)
+y = meta_info['Median NRMSE (TS)']
+
+rf = RandomForestRegressor(max_depth=2, random_state=0)
+rf.fit(X, y)
+feat_importance = pd.Series(rf.feature_importances_, X.columns.values)
+
+print(feat_importance)
+
+# Given the infomation returned by the RF, we will drop the feature 'N. instances (TS)' 
+meta_info.drop(['N. instances (TS)'], axis = 1, inplace = True)
+X.drop(['N. instances (TS)'], axis = 1, inplace = True)
+
+# In[]
 
 plot_keys = list(meta_info.keys())
-plot_keys.remove('Nature')
-for k in plot_keys:
-    meta_info[k] = pd.to_numeric(meta_info[k])
-[plot_keys.remove(k) for k in ('Median NRMSE  (TR)', 'Function size')];
+[plot_keys.remove(k) for k in ('Median NRMSE  (TR)', 'Nature', 'Function size')];
     
 colormap = cm.ScalarMappable(cmap=cm.get_cmap('RdYlBu'))
 colormap.set_array(meta_info['Median NRMSE (TS)'])
-
-# In[]
 
 for i in range(len(plot_keys)):   
     for j in range(i+1, len(plot_keys)):
@@ -693,9 +724,32 @@ for i in range(len(plot_keys)):
         plt.savefig('plots/' + plot_keys[i] + ' VS ' + plot_keys[j] + '.pdf', 
                     bbox_inches="tight")
         plt.close()
+        
+# In[]
 
-rf = ExtraTreesClassifier(n_estimators=250, random_state=0)
+from sklearn.manifold import Isomap
+from sklearn.decomposition import TruncatedSVD
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.preprocessing import StandardScaler
 
+std_scale = StandardScaler().fit(X)
+X_norm = std_scale.transform(X)
 
+isomap = TruncatedSVD(n_components=2)
+X_norm_2d = isomap.fit_transform(X_norm)
 
-#lr = LINEAR_REGRESSION_MODEL
+for nature in [('Real', 'o'), ('Synthetic', '^')]:
+            
+            plot_data_X = X_norm_2d[meta_info['Nature'] == nature[0]]
+            plot_data_y = y[meta_info['Nature'] == nature[0]]
+                        
+            plt.scatter(plot_data_X[:,0], plot_data_X[:,1], 
+                        c = plot_data_y,
+                        cmap = cm.get_cmap('RdYlBu'),
+                        marker = nature[1],
+                        linewidth='0.2')
+plt.xlabel('Component 1')
+plt.ylabel('Component 2')
+plt.colorbar(colormap)
+plt.savefig('plots/pca_features.pdf', bbox_inches="tight")
+plt.close()
