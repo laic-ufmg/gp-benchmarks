@@ -16,4 +16,15 @@ rsc/.ipynb_checkpoints/*
 /rsc/performace_metrics-bck/*
 *.bbl
 *.blg
-
+/2-methodology.log
+/comment.cut
+/rsc/performace_metrics.zip
+/rsc/smith-miles/README.txt
+/rsc/smith-miles/Source/extractMetafeatures_selected.R
+/rsc/smith-miles/Source/supportFunctions.R
+/rsc/smith-miles/Source/trains.MFs.txt
+/publication/0-GECCO18-benchmarks.aux
+/publication/0-GECCO18-benchmarks.log
+/publication/0-GECCO18-benchmarks.out
+/publication/0-GECCO18-benchmarks.pdf
+/publication/0-GECCO18-benchmarks.synctex.gz
